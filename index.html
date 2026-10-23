@@ -83,6 +83,11 @@ details{color:var(--muted);font-size:.9rem}
 @media (prefers-reduced-motion:no-preference){.check button{animation:pulse 2s ease-in-out infinite}}
 @keyframes pulse{50%{transform:scale(1.05)}}
 @media (max-width:380px){.skips button{font-size:.85rem}}
+.audiocard{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+.audiocard .disc{flex:none;width:56px;height:56px;border-radius:50%;background:radial-gradient(circle,var(--bg) 0 18%,var(--accent) 19% 22%,var(--track) 23% 100%)}
+.audiocard .an{min-width:0;display:flex;flex-direction:column;gap:4px}
+.audiocard b{font-family:var(--display);font-weight:500;font-size:1.1rem;overflow-wrap:anywhere}
+.filebtn{white-space:nowrap}
 </style>
 </head>
 <body>
@@ -94,11 +99,19 @@ details{color:var(--muted);font-size:.9rem}
   </header>
 
   <div class="row">
-    <input type="text" id="url" placeholder="Ielīmē YouTube saiti" autocomplete="off">
+    <input type="text" id="url" placeholder="YouTube vai audio faila saite" autocomplete="off">
     <button id="load" class="primary">Atvērt</button>
+    <button id="fileBtn" class="filebtn">Fails no ierīces</button>
+    <input type="file" id="fileIn" accept="audio/*,.mp3,.m4a,.m4b,.aac,.ogg,.opus,.flac,.wav" hidden>
   </div>
+  <span class="status" id="srcMsg" hidden></span>
 
-  <div class="video"><div id="player"></div></div>
+  <div class="video" id="videoBox" hidden><div id="player"></div></div>
+  <div class="audiocard" id="audioBox" hidden>
+    <div class="disc" aria-hidden="true"></div>
+    <div class="an"><b id="audioTitle"></b><span class="status" id="audioKind"></span></div>
+  </div>
+  <audio id="audio" preload="metadata"></audio>
 
   <section class="controls" aria-label="Atskaņošana">
     <div class="times"><b id="cur">0:00</b><span id="dur">0:00</span></div>
@@ -154,7 +167,7 @@ details{color:var(--muted);font-size:.9rem}
   </section>
 
   <h2>Manas grāmatas</h2>
-  <p class="empty" id="booksEmpty">Vēl nav nevienas. Ielīmē YouTube saiti augšā un spied “Atvērt”.</p>
+  <p class="empty" id="booksEmpty">Vēl nav nevienas. Ielīmē saiti vai izvēlies failu augšā.</p>
   <ol class="books" id="books"></ol>
 
   <h2>Žurnāls</h2>
@@ -168,10 +181,10 @@ details{color:var(--muted);font-size:.9rem}
 
   <details>
     <summary>Kā tas strādā</summary>
-    <p>Josla: pieskaries vai noklikšķini jebkurā vietā un velc. Lielais skaitlis rāda laiku, un pēc atlaišanas atskaņošana sākas tieši no tā. Datorā joslu var vadīt arī ar bultiņām (←/→ pa 15 s, ar Shift pa 1 min).</p>
-    <p>Miega pārbaude: ik pēc izvēlētā laika atskan klusa skaņa un parādās poga “Es klausos”. Ja to nenospied, atskaņošana apstājas, un atsākšanas vieta ir pēdējā apstiprinātā mīnus 30 sekundes.</p>
-    <p>Citas grāmatas: ielīmē jaunu YouTube saiti un spied “Atvērt”. Katrai grāmatai vieta un žurnāls glabājas atsevišķi, un sadaļā “Manas grāmatas” var pārslēgties starp tām.</p>
-    <p>“Aptumšot” uzliek lapai tumšu slāni. Telefona īsto spilgtumu tīmekļa lapa mainīt nevar; to varēs Android lietotnē.</p>
+    <p>Avoti: YouTube saite, saite uz audio failu internetā (piemēram, .mp3) vai fails no telefona vai datora (“Fails no ierīces”). Failu pārlūks neatceras, tāpēc pēc lapas atvēršanas tas jāizvēlas vēlreiz; vieta atradīsies pati.</p>
+    <p>Josla: pieskaries vai noklikšķini un velc. Lielais skaitlis rāda laiku, un pēc atlaišanas atskaņošana sākas tieši no tā. Datorā var lietot arī bultiņas (←/→ pa 15 s, ar Shift pa 1 min).</p>
+    <p>Miega pārbaude: ik pēc izvēlētā laika atskan klusa skaņa un parādās poga “Es klausos”. Ja to nenospied, atskaņošana apstājas, un atsākšanas vieta ir pēdējā apstiprinātā mīnus 30 sekundes. Audio failiem ar izslēgtu ekrānu apstiprināt var arī ar pogām bloķētajā ekrānā vai austiņās.</p>
+    <p>“Aptumšot” uzliek lapai tumšu slāni. Telefona īsto spilgtumu tīmekļa lapa mainīt nevar.</p>
   </details>
 </main>
 
@@ -187,68 +200,255 @@ details{color:var(--muted);font-size:.9rem}
 const $ = id => document.getElementById(id);
 const store = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
-  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} },
+  del(k){ try{ localStorage.removeItem(k); }catch(e){} }
 };
-const fmt = s => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60;
+const fmt = s => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60;
   return (h ? h + ':' + String(m).padStart(2,'0') : m) + ':' + String(x).padStart(2,'0'); };
 const clock = () => new Date().toLocaleTimeString('lv-LV', {hour:'2-digit', minute:'2-digit'});
-function parseId(u){ u = u.trim(); if (/^[\w-]{11}$/.test(u)) return u;
-  const m = u.match(/(?:v=|youtu\.be\/|shorts\/|embed\/|live\/)([\w-]{11})/); return m ? m[1] : null; }
-
-let player = null, ready = false, vid = null, data = null, lastConfirmAt = 0, checkTimer = null, countTimer = null, wake = null, audioCtx = null;
-let dragging = false, dragPos = 0, lastSeen = 0;
-
-const ok = () => player && ready && player.getCurrentTime;
-const dur = () => ok() ? (player.getDuration() || 0) : 0;
-const now = () => ok() ? player.getCurrentTime() : 0;
-const playing = () => ok() && player.getPlayerState() === YT.PlayerState.PLAYING;
-
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+function ytId(u){ u = u.trim(); if (/^[\w-]{11}$/.test(u)) return u;
+  const m = u.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([\w-]{11})/); return m ? m[1] : null; }
+const stripExt = n => n.replace(/\.[^.]+$/, '');
+
+/* ---------- Stāvoklis ---------- */
+// cur.key: YouTube grāmatām = video ID; saitēm = 'u:' + adrese; failiem = 'f:' + nosaukums + '|' + izmērs
+let cur = null, data = null;
+let yt = null, ytReady = false, ytPending = null;
+const audio = $('audio');
+let objUrl = null, lastConfirmAt = 0, checkTimer = null, countTimer = null, deadline = 0, wake = null, audioCtx = null;
+let dragging = false, dragPos = 0, pendingSeek = null, playingKey = null;
 const selected = new Set();
 
-function save(){ if (vid) store.set('nk:' + vid, data); touchBook(); }
-function load(id){
-  vid = id; data = store.get('nk:' + id, {pos:0, log:[]});
-  data.log.forEach(e => { if (!e.id) e.id = newId(); });
-  selected.clear();
-  store.set('nk:last', id);
-  const books = store.get('nk:books', {});
-  if (!books[id]) { books[id] = {title:'YouTube ' + id, dur:0, upd:Date.now()}; store.set('nk:books', books); }
-  render();
-}
+/* ---------- Kopīgs atskaņotāja interfeiss abiem avotiem ---------- */
+const P = {
+  ok(){ return cur && (cur.kind === 'yt' ? (yt && ytReady && yt.getCurrentTime) : !!audio.src); },
+  time(){ if (!P.ok()) return 0; return cur.kind === 'yt' ? yt.getCurrentTime() : audio.currentTime; },
+  dur(){ if (!P.ok()) return 0; const d = cur.kind === 'yt' ? yt.getDuration() : audio.duration; return isFinite(d) ? d : 0; },
+  playing(){ if (!P.ok()) return false; return cur.kind === 'yt' ? yt.getPlayerState() === YT.PlayerState.PLAYING : !audio.paused && !audio.ended; },
+  play(){ if (!P.ok()) return; cur.kind === 'yt' ? yt.playVideo() : audio.play().catch(() => {}); },
+  pause(){ if (!P.ok()) return; cur.kind === 'yt' ? yt.pauseVideo() : audio.pause(); },
+  seek(t){ if (!P.ok()) return; cur.kind === 'yt' ? yt.seekTo(t, true) : (audio.currentTime = t); },
+  title(){ try{ if (cur && cur.kind === 'yt' && P.ok()) return yt.getVideoData().title || ''; }catch(e){} return cur ? cur.title || '' : ''; }
+};
+
+/* ---------- Glabāšana ---------- */
+function save(){ if (cur) store.set('nk:' + cur.key, data); touchBook(); }
 function addLog(kind, pos){ if (!data) return; data.log.unshift({id:newId(), t:clock(), p:pos, k:kind}); data.log = data.log.slice(0, 100); save(); render(); }
-function confirmPos(kind){ if (!ok() || !data) return; const p = now(); data.pos = p; lastConfirmAt = Date.now(); addLog(kind, p); }
+function confirmPos(kind){ if (!P.ok() || !data) return; const p = P.time(); data.pos = p; lastConfirmAt = Date.now(); addLog(kind, p); }
+function touchBook(){
+  if (!cur) return;
+  const books = store.get('nk:books', {}), b = books[cur.key] || {};
+  b.kind = cur.kind; if (cur.url) b.url = cur.url;
+  const t = P.title(); if (t) b.title = t;
+  if (P.dur()) b.dur = P.dur();
+  b.title = b.title || cur.title || cur.key; b.upd = Date.now();
+  books[cur.key] = b; store.set('nk:books', books);
+}
+
+/* ---------- Avota atvēršana ---------- */
+function stopAll(){
+  if (yt && ytReady) try{ yt.pauseVideo(); }catch(e){}
+  audio.pause();
+}
+function begin(src){
+  playingKey = null;
+  stopAll();
+  cur = src;
+  data = store.get('nk:' + src.key, {pos:0, log:[]});
+  data.log.forEach(e => { if (!e.id) e.id = newId(); });
+  selected.clear(); lastConfirmAt = Date.now();
+  store.set('nk:last', src.kind === 'file' ? null : {key:src.key, kind:src.kind, url:src.url || null});
+  $('videoBox').hidden = src.kind !== 'yt';
+  $('audioBox').hidden = src.kind === 'yt';
+  if (src.kind !== 'yt'){
+    $('audioTitle').textContent = src.title;
+    $('audioKind').textContent = src.kind === 'file' ? 'Fails no ierīces' : 'Audio saite';
+  }
+  $('status').textContent = data.pos ? 'Šai grāmatai ir saglabāta vieta: ' + fmt(data.pos) + '.' : '';
+  touchBook(); render(); drawSeek(data.pos);
+}
+function openYouTube(id){
+  begin({key:id, kind:'yt', title:'YouTube ' + id});
+  if (!window.YT || !YT.loaded || !YT.Player){ ytPending = id; return; }
+  if (yt && ytReady) yt.cueVideoById({videoId:id, startSeconds:Math.floor(data.pos)});
+  else if (!yt) makeYT(id);
+}
+function openAudio(src, kind, key, title){
+  begin({key, kind, title, url: kind === 'url' ? src : null});
+  pendingSeek = data.pos;
+  audio.src = src; audio.load();
+  setMediaSession();
+}
+function openUrl(u){
+  u = u.trim();
+  if (!u) return;
+  const id = ytId(u);
+  if (id) return openYouTube(id);
+  if (!/^https?:\/\//i.test(u)){ showMsg('Saitei jāsākas ar http:// vai https://.'); return; }
+  let name = u; try{ name = decodeURIComponent(new URL(u).pathname.split('/').pop()) || u; }catch(e){}
+  openAudio(u, 'url', 'u:' + u, stripExt(name));
+}
+function showMsg(t){ $('srcMsg').textContent = t; $('srcMsg').hidden = !t; }
+
+$('load').onclick = () => { showMsg(''); openUrl($('url').value); };
+$('url').addEventListener('keydown', e => { if (e.key === 'Enter') $('load').click(); });
+$('fileBtn').onclick = () => $('fileIn').click();
+$('fileIn').onchange = e => {
+  const f = e.target.files && e.target.files[0]; if (!f) return;
+  showMsg('');
+  if (objUrl) URL.revokeObjectURL(objUrl);
+  objUrl = URL.createObjectURL(f);
+  $('url').value = '';
+  openAudio(objUrl, 'file', 'f:' + f.name + '|' + f.size, stripExt(f.name));
+  e.target.value = '';
+};
+
+/* ---------- Audio notikumi ---------- */
+audio.addEventListener('loadedmetadata', () => {
+  if (pendingSeek != null){ const d = P.dur(); audio.currentTime = d ? Math.min(pendingSeek, d - 1) : pendingSeek; pendingSeek = null; }
+  touchBook(); render(); drawSeek(P.time());
+});
+audio.addEventListener('play', onPlaying);
+audio.addEventListener('pause', onPaused);
+audio.addEventListener('error', () => {
+  if (!cur || cur.kind === 'yt') return;
+  showMsg(cur.kind === 'url' ? 'Šo saiti nevar atskaņot. Pārbaudi, vai tā ved tieši uz audio failu (piemēram, beidzas ar .mp3).' : 'Šo failu pārlūks nevar atskaņot. Mēģini MP3 vai M4A formātu.');
+});
+
+/* ---------- YouTube ---------- */
+function makeYT(id){
+  yt = new YT.Player('player', {
+    videoId: id,
+    playerVars:{start: Math.floor(data.pos), playsinline:1, rel:0, controls:0, disablekb:1, iv_load_policy:3},
+    events:{
+      onReady: () => { ytReady = true; if (cur && cur.kind === 'yt'){ touchBook(); render(); drawSeek(data.pos); } },
+      onStateChange: e => {
+        if (!cur || cur.kind !== 'yt') return;
+        if (e.data === YT.PlayerState.CUED){ touchBook(); render(); drawSeek(data.pos); }
+        if (e.data === YT.PlayerState.PLAYING) onPlaying();
+        if (e.data === YT.PlayerState.PAUSED) onPaused();
+        setPlayLabel();
+      }
+    }
+  });
+}
+window.onYouTubeIframeAPIReady = () => {
+  if (ytPending){ const id = ytPending; ytPending = null; if (cur && cur.key === id) makeYT(id); }
+};
+
+/* ---------- Kopīgie atskaņošanas notikumi ---------- */
+function onPlaying(){
+  setPlayLabel();
+  if (!data) return;
+  playingKey = cur.key;
+  lastConfirmAt = Date.now(); data.pos = P.time(); save(); render(); wakeOn(); startWatch();
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+}
+function onPaused(){
+  setPlayLabel();
+  if (!cur || playingKey !== cur.key) return;
+  if ($('check').hidden) confirmPos('pause');
+  wakeOff();
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+}
+function setPlayLabel(){ $('playBtn').textContent = P.playing() ? '❚❚ Pauze' : '▶ Atskaņot'; }
+$('playBtn').onclick = () => { if (!P.ok()) return; P.playing() ? P.pause() : P.play(); };
+
+/* ---------- Pārlēkšana ---------- */
+function jumpTo(t, play){
+  if (!P.ok()) return;
+  const d = P.dur(); t = Math.max(0, d ? Math.min(t, d - 1) : t);
+  P.seek(t); lastConfirmAt = Date.now(); drawSeek(t);
+  if (play) P.play();
+}
+function skip(s){
+  if (!P.ok() || !data) return;
+  const d = P.dur(), t = Math.max(0, Math.min(P.time() + s, d ? d - 1 : Infinity));
+  jumpTo(t, false); addLog('seek', t);
+}
+document.querySelectorAll('.skips button').forEach(b => b.onclick = () => skip(+b.dataset.s));
+
+/* ---------- Progresa josla (pele un pirksts) ---------- */
+const seek = $('seek');
+function drawSeek(t){
+  const d = P.dur(), f = d ? Math.min(1, Math.max(0, t / d)) : 0;
+  $('fill').style.width = (f * 100) + '%';
+  $('knob').style.left = (f * 100) + '%';
+  $('bubble').style.left = Math.min(92, Math.max(8, f * 100)) + '%';
+  $('cur').textContent = fmt(t); $('dur').textContent = fmt(d);
+  seek.setAttribute('aria-valuemax', Math.floor(d)); seek.setAttribute('aria-valuenow', Math.floor(t));
+  seek.setAttribute('aria-valuetext', fmt(t));
+}
+function posFromEvent(e){ const r = seek.getBoundingClientRect(); return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * P.dur(); }
+seek.addEventListener('pointerdown', e => {
+  if (!P.ok() || !P.dur()) return;
+  e.preventDefault();
+  dragging = true; seek.classList.add('drag'); seek.setPointerCapture(e.pointerId);
+  dragPos = posFromEvent(e); $('bubble').hidden = false; $('bubble').textContent = fmt(dragPos); drawSeek(dragPos);
+});
+seek.addEventListener('pointermove', e => { if (!dragging) return; dragPos = posFromEvent(e); $('bubble').textContent = fmt(dragPos); drawSeek(dragPos); });
+function endDrag(e){
+  if (!dragging) return;
+  dragging = false; seek.classList.remove('drag'); $('bubble').hidden = true;
+  try{ seek.releasePointerCapture(e.pointerId); }catch(_){}
+  const t = Math.floor(dragPos); jumpTo(t, false); addLog('seek', t);
+}
+seek.addEventListener('pointerup', endDrag);
+seek.addEventListener('pointercancel', endDrag);
+seek.addEventListener('keydown', e => {
+  const step = e.shiftKey ? 60 : 15;
+  if (e.key === 'ArrowRight'){ e.preventDefault(); jumpTo(P.time() + step, false); }
+  if (e.key === 'ArrowLeft'){ e.preventDefault(); jumpTo(P.time() - step, false); }
+});
+setInterval(() => {
+  if (!dragging && P.ok()) drawSeek(P.time());
+  if (cur && cur.kind !== 'yt' && P.playing() && 'mediaSession' in navigator && navigator.mediaSession.setPositionState && P.dur()){
+    try{ navigator.mediaSession.setPositionState({duration:P.dur(), position:Math.min(P.time(), P.dur()), playbackRate:1}); }catch(e){}
+  }
+}, 500);
+
+/* ---------- Bloķētā ekrāna un austiņu pogas (audio failiem) ---------- */
+function setMediaSession(){
+  if (!('mediaSession' in navigator)) return;
+  try{ navigator.mediaSession.metadata = new MediaMetadata({title: cur.title, artist: 'Nakts klausītājs'}); }catch(e){}
+  const awakeOr = fn => () => { if (!$('check').hidden){ confirmAwake(); return; } fn(); };
+  const h = {
+    play: awakeOr(() => P.play()),
+    pause: awakeOr(() => P.pause()),
+    seekbackward: awakeOr(() => skip(-15)),
+    seekforward: awakeOr(() => skip(15)),
+    previoustrack: awakeOr(() => skip(-60)),
+    nexttrack: awakeOr(() => skip(60))
+  };
+  for (const k in h) try{ navigator.mediaSession.setActionHandler(k, h[k]); }catch(e){}
+}
 
 /* ---------- Grāmatu saraksts ---------- */
-function touchBook(){
-  if (!vid) return;
-  const books = store.get('nk:books', {}), b = books[vid] || {};
-  try{ const t = ok() && player.getVideoData && player.getVideoData().title; if (t) b.title = t; }catch(e){}
-  if (dur()) b.dur = dur();
-  b.title = b.title || 'YouTube ' + vid; b.upd = Date.now();
-  books[vid] = b; store.set('nk:books', books);
-}
 function renderBooks(){
   const books = store.get('nk:books', {});
   const ids = Object.keys(books).sort((a, b) => books[b].upd - books[a].upd);
   $('booksEmpty').hidden = ids.length > 0;
   $('books').innerHTML = '';
-  ids.forEach(id => {
-    const b = books[id], d = store.get('nk:' + id, {pos:0}), pct = b.dur ? Math.min(100, d.pos / b.dur * 100) : 0;
-    const li = document.createElement('li'); if (id === vid) li.className = 'cur';
+  ids.forEach(key => {
+    const b = books[key], kind = b.kind || 'yt', d = store.get('nk:' + key, {pos:0}), pct = b.dur ? Math.min(100, d.pos / b.dur * 100) : 0;
+    const isCur = cur && cur.key === key;
+    const li = document.createElement('li'); if (isCur) li.className = 'cur';
     const info = document.createElement('div'); info.className = 'bt';
     const name = document.createElement('span'); name.className = 'name'; name.textContent = b.title;
     info.appendChild(name);
-    info.insertAdjacentHTML('beforeend', `<div class="mini"><span style="width:${pct}%"></span></div><span class="meta">${fmt(d.pos)}${b.dur ? ' no ' + fmt(b.dur) + ' · ' + Math.round(pct) + '%' : ''}</span>`);
-    const open = document.createElement('button'); open.textContent = id === vid ? 'Atvērta' : 'Klausīties';
-    open.disabled = id === vid;
-    open.onclick = () => { $('url').value = 'https://youtu.be/' + id; openVideo(id, true); window.scrollTo({top:0, behavior:'smooth'}); };
+    const src = {yt:'YouTube', url:'Saite', file:'Fails'}[kind];
+    info.insertAdjacentHTML('beforeend', `<div class="mini"><span style="width:${pct}%"></span></div><span class="meta">${src} · ${fmt(d.pos)}${b.dur ? ' no ' + fmt(b.dur) + ' · ' + Math.round(pct) + '%' : ''}</span>`);
+    const open = document.createElement('button');
+    if (isCur){ open.textContent = 'Atvērta'; open.disabled = true; }
+    else if (kind === 'file'){ open.textContent = 'Izvēlēties failu'; open.onclick = () => $('fileIn').click(); }
+    else { open.textContent = 'Klausīties'; open.onclick = () => { if (kind === 'yt'){ $('url').value = 'https://youtu.be/' + key; openYouTube(key); } else { $('url').value = b.url; openUrl(b.url); } window.scrollTo({top:0, behavior:'smooth'}); }; }
     const del = document.createElement('button'); del.className = 'x'; del.textContent = '✕'; del.setAttribute('aria-label', 'Dzēst grāmatu ' + b.title);
     del.onclick = () => {
       if (!confirm('Dzēst “' + b.title + '” no saraksta kopā ar saglabāto vietu un žurnālu?')) return;
-      const all = store.get('nk:books', {}); delete all[id]; store.set('nk:books', all);
-      try{ localStorage.removeItem('nk:' + id); }catch(e){}
-      if (id === vid){ vid = null; data = null; try{ localStorage.removeItem('nk:last'); }catch(e){} if (ok()) player.stopVideo(); $('url').value = ''; }
+      const all = store.get('nk:books', {}); delete all[key]; store.set('nk:books', all);
+      store.del('nk:' + key);
+      if (isCur){ stopAll(); cur = null; data = null; store.set('nk:last', null); $('url').value = ''; $('videoBox').hidden = true; $('audioBox').hidden = true; drawSeek(0); }
       render();
     };
     li.append(info, open, del); $('books').appendChild(li);
@@ -270,9 +470,9 @@ $('delAll').onclick = () => { if (data && data.log.length && confirm('Dzēst vis
 
 function render(){
   renderBooks();
-  $('resumeBox').hidden = !vid;
+  $('resumeBox').hidden = !cur;
   $('log').innerHTML = '';
-  if (!vid){ $('logbar').hidden = true; $('logEmpty').hidden = false; return; }
+  if (!cur){ $('logbar').hidden = true; $('logEmpty').hidden = false; return; }
   $('resumePos').textContent = fmt(data.pos);
   const labels = {ok:'Es klausos', pause:'Pauze', mark:'Atzīmēts', sleep:'Aizmigi (atpakaļ uz šo)', seek:'Pārtīts'};
   data.log.forEach(e => {
@@ -282,75 +482,15 @@ function render(){
     cb.onchange = () => { cb.checked ? selected.add(e.id) : selected.delete(e.id); updateLogBar(); };
     li.appendChild(cb);
     li.insertAdjacentHTML('beforeend', `<span class="t">${e.t}</span><span class="p">${fmt(e.p)}</span><span class="k">${labels[e.k]||e.k}</span>`);
-    const b = document.createElement('button'); b.textContent = 'Uz šejieni';
-    b.onclick = () => jumpTo(e.p, true);
+    const b = document.createElement('button'); b.textContent = 'Uz šejieni'; b.onclick = () => jumpTo(e.p, true);
     const x = document.createElement('button'); x.className = 'x'; x.textContent = '✕'; x.setAttribute('aria-label', 'Dzēst ierakstu');
     x.onclick = () => deleteEntries(new Set([e.id]));
     li.append(b, x); $('log').appendChild(li);
   });
   updateLogBar();
 }
-
-/* ---------- Pārlēkšana ---------- */
-function jumpTo(t, play){
-  if (!ok()) return;
-  const d = dur(); t = Math.max(0, d ? Math.min(t, d - 1) : t);
-  player.seekTo(t, true);
-  lastSeen = t; lastConfirmAt = Date.now();
-  drawSeek(t);
-  if (play) player.playVideo();
-}
-document.querySelectorAll('.skips button').forEach(b => b.onclick = () => {
-  if (!ok() || !data) return;
-  const t = now() + (+b.dataset.s);
-  jumpTo(t, false);
-  addLog('seek', Math.max(0, Math.min(t, dur())));
-});
-
-/* ---------- Progresa josla (pele un pirksts, ar Pointer Events) ---------- */
-const seek = $('seek');
-function drawSeek(t){
-  const d = dur(), f = d ? Math.min(1, Math.max(0, t / d)) : 0;
-  $('fill').style.width = (f * 100) + '%';
-  $('knob').style.left = (f * 100) + '%';
-  $('bubble').style.left = Math.min(92, Math.max(8, f * 100)) + '%';
-  $('cur').textContent = fmt(t); $('dur').textContent = fmt(d);
-  seek.setAttribute('aria-valuemax', Math.floor(d)); seek.setAttribute('aria-valuenow', Math.floor(t));
-  seek.setAttribute('aria-valuetext', fmt(t));
-}
-function posFromEvent(e){
-  const r = seek.getBoundingClientRect();
-  const f = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
-  return f * dur();
-}
-seek.addEventListener('pointerdown', e => {
-  if (!ok() || !dur()) return;
-  e.preventDefault();
-  dragging = true; seek.classList.add('drag'); seek.setPointerCapture(e.pointerId);
-  dragPos = posFromEvent(e); $('bubble').hidden = false; $('bubble').textContent = fmt(dragPos); drawSeek(dragPos);
-});
-seek.addEventListener('pointermove', e => {
-  if (!dragging) return;
-  dragPos = posFromEvent(e); $('bubble').textContent = fmt(dragPos); drawSeek(dragPos);
-});
-function endDrag(e, commit){
-  if (!dragging) return;
-  dragging = false; seek.classList.remove('drag'); $('bubble').hidden = true;
-  try{ seek.releasePointerCapture(e.pointerId); }catch(_){}
-  if (commit){ const t = Math.floor(dragPos); jumpTo(t, false); addLog('seek', t); }
-}
-seek.addEventListener('pointerup', e => endDrag(e, true));
-seek.addEventListener('pointercancel', e => endDrag(e, true));
-seek.addEventListener('keydown', e => {
-  const step = e.shiftKey ? 60 : 15;
-  if (e.key === 'ArrowRight'){ e.preventDefault(); jumpTo(now() + step, false); }
-  if (e.key === 'ArrowLeft'){ e.preventDefault(); jumpTo(now() - step, false); }
-});
-setInterval(() => { if (!dragging && ok()) drawSeek(now()); }, 250);
-
-/* ---------- Atskaņot / pauze ---------- */
-$('playBtn').onclick = () => { if (!ok()) return; playing() ? player.pauseVideo() : player.playVideo(); };
-function setPlayLabel(){ $('playBtn').textContent = playing() ? '❚❚ Pauze' : '▶ Atskaņot'; }
+$('markBtn').onclick = () => confirmPos('mark');
+$('resumeBtn').onclick = () => { if (data) jumpTo(data.pos, true); };
 
 /* ---------- Aptumšošana ---------- */
 function setDim(v){ $('dim').style.opacity = v / 100; $('dimVal').textContent = v + '%'; $('dimRange').value = v; store.set('nk:dim', v); }
@@ -361,6 +501,7 @@ setDim(store.get('nk:dim', 0));
 function beep(){
   try{
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
     const o = audioCtx.createOscillator(), g = audioCtx.createGain();
     o.frequency.value = 660; g.gain.setValueAtTime(0.0001, audioCtx.currentTime);
     g.gain.exponentialRampToValueAtTime(0.15, audioCtx.currentTime + 0.05);
@@ -370,77 +511,50 @@ function beep(){
 }
 async function wakeOn(){ if (!$('keepOn').checked) return; try{ if ('wakeLock' in navigator && !wake){ wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => wake = null); } }catch(e){} }
 function wakeOff(){ try{ wake && wake.release(); }catch(e){} wake = null; }
-$('keepOn').onchange = e => { store.set('nk:keepOn', e.target.checked); e.target.checked && playing() ? wakeOn() : wakeOff(); };
+$('keepOn').onchange = e => { store.set('nk:keepOn', e.target.checked); e.target.checked && P.playing() ? wakeOn() : wakeOff(); };
 $('keepOn').checked = store.get('nk:keepOn', true);
-document.addEventListener('visibilitychange', () => { if (!document.hidden && playing()) wakeOn(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && P.playing()) wakeOn(); });
 
 /* ---------- Miega pārbaude ---------- */
 function startWatch(){
   clearInterval(checkTimer);
   checkTimer = setInterval(() => {
     const iv = +$('interval').value;
-    if (!iv || !data || !playing() || !$('check').hidden) return;
+    if (!iv || !data || !P.playing() || !$('check').hidden) return;
     if (Date.now() - lastConfirmAt >= iv * 60000) askAwake();
   }, 5000);
 }
 function askAwake(){
-  let left = +$('grace').value;
-  $('count').textContent = left; $('check').hidden = false; beep();
+  deadline = Date.now() + (+$('grace').value) * 1000;
+  $('check').hidden = false; beep();
+  let lastBeep = Date.now();
   clearInterval(countTimer);
-  countTimer = setInterval(() => {
-    left--; $('count').textContent = left;
-    if (left % 15 === 0 && left > 0) beep();
+  const tick = () => {
+    const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+    $('count').textContent = left;
+    if (Date.now() - lastBeep >= 15000 && left > 0){ beep(); lastBeep = Date.now(); }
     if (left <= 0){
       clearInterval(countTimer); $('check').hidden = true;
-      player.pauseVideo();
+      P.pause();
       data.pos = Math.max(0, data.pos - 30); addLog('sleep', data.pos);
       $('status').textContent = 'Apturēts ' + clock() + '. Atsāc ar pogu “Atsākt no šejienes”.';
       wakeOff();
     }
-  }, 1000);
+  };
+  tick(); countTimer = setInterval(tick, 1000);
 }
-$('awake').onclick = () => { clearInterval(countTimer); $('check').hidden = true; confirmPos('ok'); };
-$('markBtn').onclick = () => confirmPos('mark');
-$('resumeBtn').onclick = () => { if (data) jumpTo(data.pos, true); };
+function confirmAwake(){ clearInterval(countTimer); $('check').hidden = true; confirmPos('ok'); }
+$('awake').onclick = confirmAwake;
 
-/* ---------- Video ielāde ---------- */
-$('load').onclick = () => {
-  const id = parseId($('url').value);
-  if (!id){ $('url').value = ''; $('url').placeholder = 'Šī nav YouTube saite. Mēģini vēlreiz.'; return; }
-  openVideo(id, true);
-};
-function openVideo(id, fresh){
-  load(id);
-  if (player && ready) player.cueVideoById({videoId:id, startSeconds:Math.floor(data.pos)});
-  else if (!player) makePlayer(id);
-  $('status').textContent = fresh && data.pos ? 'Šai grāmatai ir saglabāta vieta.' : '';
-}
-function makePlayer(id){
-  player = new YT.Player('player', {
-    videoId: id,
-    playerVars:{start: Math.floor(data.pos), playsinline:1, rel:0, controls:0, disablekb:1, iv_load_policy:3},
-    events:{
-      onReady: () => { ready = true; if (data){ drawSeek(data.pos); touchBook(); renderBooks(); } },
-      onStateChange: e => {
-        setPlayLabel();
-        if (!data) return;
-        const t = now();
-        if (e.data === YT.PlayerState.CUED){ touchBook(); renderBooks(); drawSeek(data.pos); }
-        if (e.data === YT.PlayerState.PLAYING){
-          lastConfirmAt = Date.now(); lastSeen = t; data.pos = t; save(); render(); wakeOn(); startWatch();
-        } else if (e.data === YT.PlayerState.PAUSED){
-          if ($('check').hidden) confirmPos('pause');
-          wakeOff();
-        }
-      }
-    }
-  });
-}
+/* ---------- Starts ---------- */
 render();
-window.onYouTubeIframeAPIReady = () => {
+(function restore(){
   const last = store.get('nk:last', null);
-  if (last){ $('url').value = 'https://youtu.be/' + last; openVideo(last, false); }
-};
+  if (!last) return;
+  if (typeof last === 'string'){ $('url').value = 'https://youtu.be/' + last; openYouTube(last); return; }
+  if (last.kind === 'yt'){ $('url').value = 'https://youtu.be/' + last.key; openYouTube(last.key); }
+  else if (last.kind === 'url' && last.url){ $('url').value = last.url; openUrl(last.url); }
+})();
 </script>
 </body>
 </html>
