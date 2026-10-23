@@ -66,6 +66,19 @@ li .p{font-variant-numeric:tabular-nums;font-weight:600}
 li .k{flex:1;min-width:0;color:var(--muted)}
 li.ok .k{color:var(--ok)} li.sleep .k{color:var(--warn)}
 li button{padding:6px 12px;font-size:.9rem}
+li input[type=checkbox]{width:20px;height:20px;accent-color:var(--accent);flex:none}
+li button.x{padding:6px 10px;color:var(--muted)}
+.logbar{display:flex;gap:8px;flex-wrap:wrap}
+.logbar button{padding:8px 12px;font-size:.9rem}
+.logbar button.danger{color:var(--warn);border-color:var(--warn)}
+.empty{color:var(--muted);font-size:.9rem;margin:0}
+.books li{flex-wrap:wrap}
+.books .bt{flex:1 1 200px;min-width:0;display:flex;flex-direction:column;gap:6px}
+.books .name{color:var(--fg);overflow-wrap:anywhere}
+.books .mini{height:4px;background:var(--track);border-radius:2px;overflow:hidden}
+.books .mini span{display:block;height:100%;background:var(--accent)}
+.books .meta{color:var(--muted);font-size:.85rem;font-variant-numeric:tabular-nums}
+.books li.cur{outline:1px solid var(--accent)}
 details{color:var(--muted);font-size:.9rem}
 @media (prefers-reduced-motion:no-preference){.check button{animation:pulse 2s ease-in-out infinite}}
 @keyframes pulse{50%{transform:scale(1.05)}}
@@ -140,13 +153,24 @@ details{color:var(--muted);font-size:.9rem}
     <label class="toggle"><input type="checkbox" id="keepOn" checked> Turēt ekrānu ieslēgtu, kamēr skan</label>
   </section>
 
+  <h2>Manas grāmatas</h2>
+  <p class="empty" id="booksEmpty">Vēl nav nevienas. Ielīmē YouTube saiti augšā un spied “Atvērt”.</p>
+  <ol class="books" id="books"></ol>
+
   <h2>Žurnāls</h2>
+  <div class="logbar" id="logbar">
+    <button id="selAll">Atzīmēt visus</button>
+    <button id="delSel" class="danger" disabled>Dzēst atzīmētos</button>
+    <button id="delAll" class="danger">Dzēst visu</button>
+  </div>
+  <p class="empty" id="logEmpty">Žurnāls ir tukšs.</p>
   <ol id="log"></ol>
 
   <details>
     <summary>Kā tas strādā</summary>
     <p>Josla: pieskaries vai noklikšķini jebkurā vietā un velc. Lielais skaitlis rāda laiku, un pēc atlaišanas atskaņošana sākas tieši no tā. Datorā joslu var vadīt arī ar bultiņām (←/→ pa 15 s, ar Shift pa 1 min).</p>
     <p>Miega pārbaude: ik pēc izvēlētā laika atskan klusa skaņa un parādās poga “Es klausos”. Ja to nenospied, atskaņošana apstājas, un atsākšanas vieta ir pēdējā apstiprinātā mīnus 30 sekundes.</p>
+    <p>Citas grāmatas: ielīmē jaunu YouTube saiti un spied “Atvērt”. Katrai grāmatai vieta un žurnāls glabājas atsevišķi, un sadaļā “Manas grāmatas” var pārslēgties starp tām.</p>
     <p>“Aptumšot” uzliek lapai tumšu slāni. Telefona īsto spilgtumu tīmekļa lapa mainīt nevar; to varēs Android lietotnē.</p>
   </details>
 </main>
@@ -179,24 +203,92 @@ const dur = () => ok() ? (player.getDuration() || 0) : 0;
 const now = () => ok() ? player.getCurrentTime() : 0;
 const playing = () => ok() && player.getPlayerState() === YT.PlayerState.PLAYING;
 
-function save(){ if (vid) store.set('nk:' + vid, data); }
-function load(id){ vid = id; data = store.get('nk:' + id, {pos:0, log:[]}); store.set('nk:last', id); render(); }
-function addLog(kind, pos){ if (!data) return; data.log.unshift({t:clock(), p:pos, k:kind}); data.log = data.log.slice(0, 60); save(); render(); }
-function confirmPos(kind){ if (!ok()) return; const p = now(); data.pos = p; lastConfirmAt = Date.now(); addLog(kind, p); }
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const selected = new Set();
+
+function save(){ if (vid) store.set('nk:' + vid, data); touchBook(); }
+function load(id){
+  vid = id; data = store.get('nk:' + id, {pos:0, log:[]});
+  data.log.forEach(e => { if (!e.id) e.id = newId(); });
+  selected.clear();
+  store.set('nk:last', id);
+  const books = store.get('nk:books', {});
+  if (!books[id]) { books[id] = {title:'YouTube ' + id, dur:0, upd:Date.now()}; store.set('nk:books', books); }
+  render();
+}
+function addLog(kind, pos){ if (!data) return; data.log.unshift({id:newId(), t:clock(), p:pos, k:kind}); data.log = data.log.slice(0, 100); save(); render(); }
+function confirmPos(kind){ if (!ok() || !data) return; const p = now(); data.pos = p; lastConfirmAt = Date.now(); addLog(kind, p); }
+
+/* ---------- Grāmatu saraksts ---------- */
+function touchBook(){
+  if (!vid) return;
+  const books = store.get('nk:books', {}), b = books[vid] || {};
+  try{ const t = ok() && player.getVideoData && player.getVideoData().title; if (t) b.title = t; }catch(e){}
+  if (dur()) b.dur = dur();
+  b.title = b.title || 'YouTube ' + vid; b.upd = Date.now();
+  books[vid] = b; store.set('nk:books', books);
+}
+function renderBooks(){
+  const books = store.get('nk:books', {});
+  const ids = Object.keys(books).sort((a, b) => books[b].upd - books[a].upd);
+  $('booksEmpty').hidden = ids.length > 0;
+  $('books').innerHTML = '';
+  ids.forEach(id => {
+    const b = books[id], d = store.get('nk:' + id, {pos:0}), pct = b.dur ? Math.min(100, d.pos / b.dur * 100) : 0;
+    const li = document.createElement('li'); if (id === vid) li.className = 'cur';
+    const info = document.createElement('div'); info.className = 'bt';
+    const name = document.createElement('span'); name.className = 'name'; name.textContent = b.title;
+    info.appendChild(name);
+    info.insertAdjacentHTML('beforeend', `<div class="mini"><span style="width:${pct}%"></span></div><span class="meta">${fmt(d.pos)}${b.dur ? ' no ' + fmt(b.dur) + ' · ' + Math.round(pct) + '%' : ''}</span>`);
+    const open = document.createElement('button'); open.textContent = id === vid ? 'Atvērta' : 'Klausīties';
+    open.disabled = id === vid;
+    open.onclick = () => { $('url').value = 'https://youtu.be/' + id; openVideo(id, true); window.scrollTo({top:0, behavior:'smooth'}); };
+    const del = document.createElement('button'); del.className = 'x'; del.textContent = '✕'; del.setAttribute('aria-label', 'Dzēst grāmatu ' + b.title);
+    del.onclick = () => {
+      if (!confirm('Dzēst “' + b.title + '” no saraksta kopā ar saglabāto vietu un žurnālu?')) return;
+      const all = store.get('nk:books', {}); delete all[id]; store.set('nk:books', all);
+      try{ localStorage.removeItem('nk:' + id); }catch(e){}
+      if (id === vid){ vid = null; data = null; try{ localStorage.removeItem('nk:last'); }catch(e){} if (ok()) player.stopVideo(); $('url').value = ''; }
+      render();
+    };
+    li.append(info, open, del); $('books').appendChild(li);
+  });
+}
+
+/* ---------- Žurnāls ---------- */
+function updateLogBar(){
+  const n = data ? data.log.length : 0;
+  $('logbar').hidden = n === 0; $('logEmpty').hidden = n > 0;
+  $('delSel').disabled = selected.size === 0;
+  $('delSel').textContent = selected.size ? 'Dzēst atzīmētos (' + selected.size + ')' : 'Dzēst atzīmētos';
+  $('selAll').textContent = n && selected.size === n ? 'Noņemt atzīmes' : 'Atzīmēt visus';
+}
+function deleteEntries(ids){ data.log = data.log.filter(e => !ids.has(e.id)); ids.forEach(i => selected.delete(i)); save(); render(); }
+$('selAll').onclick = () => { if (!data) return; if (selected.size === data.log.length) selected.clear(); else data.log.forEach(e => selected.add(e.id)); render(); };
+$('delSel').onclick = () => { if (selected.size && confirm('Dzēst ' + selected.size + ' atzīmētos ierakstus?')) deleteEntries(new Set(selected)); };
+$('delAll').onclick = () => { if (data && data.log.length && confirm('Dzēst visu šīs grāmatas žurnālu? Saglabātā vieta paliks.')) deleteEntries(new Set(data.log.map(e => e.id))); };
 
 function render(){
+  renderBooks();
   $('resumeBox').hidden = !vid;
-  if (!vid) return;
+  $('log').innerHTML = '';
+  if (!vid){ $('logbar').hidden = true; $('logEmpty').hidden = false; return; }
   $('resumePos').textContent = fmt(data.pos);
   const labels = {ok:'Es klausos', pause:'Pauze', mark:'Atzīmēts', sleep:'Aizmigi (atpakaļ uz šo)', seek:'Pārtīts'};
-  $('log').innerHTML = '';
   data.log.forEach(e => {
     const li = document.createElement('li'); li.className = e.k;
-    li.innerHTML = `<span class="t">${e.t}</span><span class="p">${fmt(e.p)}</span><span class="k">${labels[e.k]||e.k}</span>`;
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = selected.has(e.id);
+    cb.setAttribute('aria-label', 'Atzīmēt ierakstu ' + e.t);
+    cb.onchange = () => { cb.checked ? selected.add(e.id) : selected.delete(e.id); updateLogBar(); };
+    li.appendChild(cb);
+    li.insertAdjacentHTML('beforeend', `<span class="t">${e.t}</span><span class="p">${fmt(e.p)}</span><span class="k">${labels[e.k]||e.k}</span>`);
     const b = document.createElement('button'); b.textContent = 'Uz šejieni';
     b.onclick = () => jumpTo(e.p, true);
-    li.appendChild(b); $('log').appendChild(li);
+    const x = document.createElement('button'); x.className = 'x'; x.textContent = '✕'; x.setAttribute('aria-label', 'Dzēst ierakstu');
+    x.onclick = () => deleteEntries(new Set([e.id]));
+    li.append(b, x); $('log').appendChild(li);
   });
+  updateLogBar();
 }
 
 /* ---------- Pārlēkšana ---------- */
@@ -209,7 +301,7 @@ function jumpTo(t, play){
   if (play) player.playVideo();
 }
 document.querySelectorAll('.skips button').forEach(b => b.onclick = () => {
-  if (!ok()) return;
+  if (!ok() || !data) return;
   const t = now() + (+b.dataset.s);
   jumpTo(t, false);
   addLog('seek', Math.max(0, Math.min(t, dur())));
@@ -287,7 +379,7 @@ function startWatch(){
   clearInterval(checkTimer);
   checkTimer = setInterval(() => {
     const iv = +$('interval').value;
-    if (!iv || !playing() || !$('check').hidden) return;
+    if (!iv || !data || !playing() || !$('check').hidden) return;
     if (Date.now() - lastConfirmAt >= iv * 60000) askAwake();
   }, 5000);
 }
@@ -328,10 +420,12 @@ function makePlayer(id){
     videoId: id,
     playerVars:{start: Math.floor(data.pos), playsinline:1, rel:0, controls:0, disablekb:1, iv_load_policy:3},
     events:{
-      onReady: () => { ready = true; drawSeek(data.pos); },
+      onReady: () => { ready = true; if (data){ drawSeek(data.pos); touchBook(); renderBooks(); } },
       onStateChange: e => {
         setPlayLabel();
+        if (!data) return;
         const t = now();
+        if (e.data === YT.PlayerState.CUED){ touchBook(); renderBooks(); drawSeek(data.pos); }
         if (e.data === YT.PlayerState.PLAYING){
           lastConfirmAt = Date.now(); lastSeen = t; data.pos = t; save(); render(); wakeOn(); startWatch();
         } else if (e.data === YT.PlayerState.PAUSED){
@@ -342,6 +436,7 @@ function makePlayer(id){
     }
   });
 }
+render();
 window.onYouTubeIframeAPIReady = () => {
   const last = store.get('nk:last', null);
   if (last){ $('url').value = 'https://youtu.be/' + last; openVideo(last, false); }
