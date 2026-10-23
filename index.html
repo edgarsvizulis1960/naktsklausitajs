@@ -104,6 +104,7 @@ details{color:var(--muted);font-size:.9rem}
     <button id="fileBtn" class="filebtn">Fails no ierīces</button>
     <input type="file" id="fileIn" accept="audio/*,.mp3,.m4a,.m4b,.aac,.ogg,.opus,.flac,.wav" hidden>
   </div>
+  <label class="toggle"><input type="checkbox" id="keepCopy" checked> Saglabāt failu atskaņotājā, lai nākamreiz nav jāmeklē</label>
   <span class="status" id="srcMsg" hidden></span>
 
   <div class="video" id="videoBox" hidden><div id="player"></div></div>
@@ -169,6 +170,7 @@ details{color:var(--muted);font-size:.9rem}
   <h2>Manas grāmatas</h2>
   <p class="empty" id="booksEmpty">Vēl nav nevienas. Ielīmē saiti vai izvēlies failu augšā.</p>
   <ol class="books" id="books"></ol>
+  <span class="status" id="storeInfo" hidden></span>
 
   <h2>Žurnāls</h2>
   <div class="logbar" id="logbar">
@@ -181,7 +183,7 @@ details{color:var(--muted);font-size:.9rem}
 
   <details>
     <summary>Kā tas strādā</summary>
-    <p>Avoti: YouTube saite, saite uz audio failu internetā (piemēram, .mp3) vai fails no telefona vai datora (“Fails no ierīces”). Failu pārlūks neatceras, tāpēc pēc lapas atvēršanas tas jāizvēlas vēlreiz; vieta atradīsies pati.</p>
+    <p>Avoti: YouTube saite, saite uz audio failu internetā (piemēram, .mp3) vai fails no telefona vai datora (“Fails no ierīces”). Ja atzīmēts “Saglabāt failu atskaņotājā”, kopija tiek saglabāta pārlūka krātuvē, un grāmatu nākamreiz var atvērt sarakstā “Manas grāmatas”. Kopija aizņem vietu telefonā; dzēšot grāmatu no saraksta, tiek dzēsta arī kopija (oriģināls paliek). Ja notīrīsi pārlūka datus, kopijas pazudīs.</p>
     <p>Josla: pieskaries vai noklikšķini un velc. Lielais skaitlis rāda laiku, un pēc atlaišanas atskaņošana sākas tieši no tā. Datorā var lietot arī bultiņas (←/→ pa 15 s, ar Shift pa 1 min).</p>
     <p>Miega pārbaude: ik pēc izvēlētā laika atskan klusa skaņa un parādās poga “Es klausos”. Ja to nenospied, atskaņošana apstājas, un atsākšanas vieta ir pēdējā apstiprinātā mīnus 30 sekundes. Audio failiem ar izslēgtu ekrānu apstiprināt var arī ar pogām bloķētajā ekrānā vai austiņās.</p>
     <p>“Aptumšot” uzliek lapai tumšu slāni. Telefona īsto spilgtumu tīmekļa lapa mainīt nevar.</p>
@@ -210,6 +212,34 @@ const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2
 function ytId(u){ u = u.trim(); if (/^[\w-]{11}$/.test(u)) return u;
   const m = u.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([\w-]{11})/); return m ? m[1] : null; }
 const stripExt = n => n.replace(/\.[^.]+$/, '');
+
+/* ---------- Failu krātuve atskaņotājā (IndexedDB) ---------- */
+const fileDB = {
+  db: null,
+  open(){ if (this.db) return Promise.resolve(this.db); return new Promise((res, rej) => {
+    let r; try{ r = indexedDB.open('naktsklausitajs', 1); }catch(e){ return rej(e); }
+    r.onupgradeneeded = () => r.result.createObjectStore('files');
+    r.onsuccess = () => { this.db = r.result; res(this.db); };
+    r.onerror = () => rej(r.error);
+  }); },
+  async tx(mode, fn){ const db = await this.open(); return new Promise((res, rej) => {
+    const t = db.transaction('files', mode), st = t.objectStore('files'), q = fn(st);
+    t.oncomplete = () => res(q && q.result); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
+  }); },
+  put(k, blob){ return this.tx('readwrite', st => st.put(blob, k)); },
+  get(k){ return this.tx('readonly', st => st.get(k)); },
+  del(k){ return this.tx('readwrite', st => st.delete(k)); }
+};
+async function showStoreInfo(){
+  try{
+    const books = store.get('nk:books', {});
+    const n = Object.values(books).filter(b => b.stored).length;
+    if (!n || !navigator.storage || !navigator.storage.estimate){ $('storeInfo').hidden = true; return; }
+    const e = await navigator.storage.estimate();
+    $('storeInfo').textContent = 'Atskaņotājā saglabāti faili: ' + n + ' · aizņem ' + Math.round(e.usage / 1048576) + ' MB · brīvs ap ' + Math.round((e.quota - e.usage) / 1073741824) + ' GB';
+    $('storeInfo').hidden = false;
+  }catch(e){}
+}
 
 /* ---------- Stāvoklis ---------- */
 // cur.key: YouTube grāmatām = video ID; saitēm = 'u:' + adrese; failiem = 'f:' + nosaukums + '|' + izmērs
@@ -258,7 +288,7 @@ function begin(src){
   data = store.get('nk:' + src.key, {pos:0, log:[]});
   data.log.forEach(e => { if (!e.id) e.id = newId(); });
   selected.clear(); lastConfirmAt = Date.now();
-  store.set('nk:last', src.kind === 'file' ? null : {key:src.key, kind:src.kind, url:src.url || null});
+  store.set('nk:last', {key:src.key, kind:src.kind, url:src.url || null});
   $('videoBox').hidden = src.kind !== 'yt';
   $('audioBox').hidden = src.kind === 'yt';
   if (src.kind !== 'yt'){
@@ -294,15 +324,43 @@ function showMsg(t){ $('srcMsg').textContent = t; $('srcMsg').hidden = !t; }
 $('load').onclick = () => { showMsg(''); openUrl($('url').value); };
 $('url').addEventListener('keydown', e => { if (e.key === 'Enter') $('load').click(); });
 $('fileBtn').onclick = () => $('fileIn').click();
-$('fileIn').onchange = e => {
-  const f = e.target.files && e.target.files[0]; if (!f) return;
-  showMsg('');
+function playBlob(blob, key, title){
   if (objUrl) URL.revokeObjectURL(objUrl);
-  objUrl = URL.createObjectURL(f);
+  objUrl = URL.createObjectURL(blob);
   $('url').value = '';
-  openAudio(objUrl, 'file', 'f:' + f.name + '|' + f.size, stripExt(f.name));
+  openAudio(objUrl, 'file', key, title);
+}
+$('fileIn').onchange = async e => {
+  const f = e.target.files && e.target.files[0]; if (!f) return;
   e.target.value = '';
+  const key = 'f:' + f.name + '|' + f.size;
+  showMsg('');
+  playBlob(f, key, stripExt(f.name));
+  const books = store.get('nk:books', {});
+  if (!$('keepCopy').checked || (books[key] && books[key].stored)) return;
+  showMsg('Saglabāju kopiju atskaņotājā (' + Math.round(f.size / 1048576) + ' MB)… Vari jau klausīties.');
+  try{
+    if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
+    await fileDB.put(key, f);
+    const all = store.get('nk:books', {}); if (all[key]){ all[key].stored = true; store.set('nk:books', all); }
+    showMsg('Saglabāts. Nākamreiz atver šo grāmatu sarakstā “Manas grāmatas”.');
+    renderBooks(); showStoreInfo();
+  }catch(err){
+    showMsg('Kopiju saglabāt neizdevās (iespējams, telefonā nepietiek vietas). Grāmatu var klausīties, bet nākamreiz fails būs jāizvēlas vēlreiz.');
+  }
 };
+$('keepCopy').checked = store.get('nk:keepCopy', true);
+$('keepCopy').onchange = e => store.set('nk:keepCopy', e.target.checked);
+async function openStored(key, title){
+  try{
+    const blob = await fileDB.get(key);
+    if (blob){ playBlob(blob, key, title); return true; }
+  }catch(e){}
+  const all = store.get('nk:books', {}); if (all[key]){ all[key].stored = false; store.set('nk:books', all); }
+  showMsg('Saglabātā kopija vairs nav atrodama. Izvēlies failu vēlreiz.');
+  renderBooks();
+  return false;
+}
 
 /* ---------- Audio notikumi ---------- */
 audio.addEventListener('loadedmetadata', () => {
@@ -437,17 +495,19 @@ function renderBooks(){
     const info = document.createElement('div'); info.className = 'bt';
     const name = document.createElement('span'); name.className = 'name'; name.textContent = b.title;
     info.appendChild(name);
-    const src = {yt:'YouTube', url:'Saite', file:'Fails'}[kind];
+    const src = kind === 'file' ? (b.stored ? 'Fails · saglabāts' : 'Fails') : {yt:'YouTube', url:'Saite'}[kind];
     info.insertAdjacentHTML('beforeend', `<div class="mini"><span style="width:${pct}%"></span></div><span class="meta">${src} · ${fmt(d.pos)}${b.dur ? ' no ' + fmt(b.dur) + ' · ' + Math.round(pct) + '%' : ''}</span>`);
     const open = document.createElement('button');
     if (isCur){ open.textContent = 'Atvērta'; open.disabled = true; }
+    else if (kind === 'file' && b.stored){ open.textContent = 'Klausīties'; open.onclick = () => { openStored(key, b.title); window.scrollTo({top:0, behavior:'smooth'}); }; }
     else if (kind === 'file'){ open.textContent = 'Izvēlēties failu'; open.onclick = () => $('fileIn').click(); }
     else { open.textContent = 'Klausīties'; open.onclick = () => { if (kind === 'yt'){ $('url').value = 'https://youtu.be/' + key; openYouTube(key); } else { $('url').value = b.url; openUrl(b.url); } window.scrollTo({top:0, behavior:'smooth'}); }; }
     const del = document.createElement('button'); del.className = 'x'; del.textContent = '✕'; del.setAttribute('aria-label', 'Dzēst grāmatu ' + b.title);
     del.onclick = () => {
-      if (!confirm('Dzēst “' + b.title + '” no saraksta kopā ar saglabāto vietu un žurnālu?')) return;
+      if (!confirm('Dzēst “' + b.title + '” no saraksta kopā ar saglabāto vietu un žurnālu?' + (b.stored ? ' Arī atskaņotājā saglabātā kopija tiks izdzēsta (oriģinālais fails telefonā paliks).' : ''))) return;
       const all = store.get('nk:books', {}); delete all[key]; store.set('nk:books', all);
       store.del('nk:' + key);
+      if (kind === 'file') fileDB.del(key).catch(() => {}).then(showStoreInfo);
       if (isCur){ stopAll(); cur = null; data = null; store.set('nk:last', null); $('url').value = ''; $('videoBox').hidden = true; $('audioBox').hidden = true; drawSeek(0); }
       render();
     };
@@ -554,7 +614,9 @@ render();
   if (typeof last === 'string'){ $('url').value = 'https://youtu.be/' + last; openYouTube(last); return; }
   if (last.kind === 'yt'){ $('url').value = 'https://youtu.be/' + last.key; openYouTube(last.key); }
   else if (last.kind === 'url' && last.url){ $('url').value = last.url; openUrl(last.url); }
+  else if (last.kind === 'file'){ const b = store.get('nk:books', {})[last.key]; if (b && b.stored) openStored(last.key, b.title); }
 })();
+showStoreInfo();
 </script>
 </body>
 </html>
