@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="lv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nakts klausītājs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,500;7..72,700&display=swap">
+<style>
+/* Nakts režīms: tumšs, maz kontrasta, lielas pogas, lai var spiest pusmiegā */
+:root{
+  --bg:#12141c; --panel:#1b1e29; --line:#2a2e3d; --track:#2f3446;
+  --fg:#d9d6cc; --muted:#8a8a96; --accent:#e0b25c; --ok:#7fbf9a; --warn:#d9826a;
+  --display:"Literata", Georgia, serif;
+  --body:system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:16px}
+main{max-width:640px;margin:0 auto;padding-block:16px 48px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;flex-direction:column;gap:16px}
+h1{font-family:var(--display);font-weight:700;font-size:1.5rem;margin:0;color:var(--accent)}
+.sub{color:var(--muted);margin:0;font-size:.9rem}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+input[type=text],select{flex:1;min-width:0;background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:1rem}
+button{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:12px 16px;font-size:1rem;cursor:pointer;touch-action:manipulation}
+button.primary{background:var(--accent);color:#1a1408;border-color:var(--accent);font-weight:600}
+button:focus-visible,input:focus-visible,select:focus-visible,.seek:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.video{position:relative;width:100%;aspect-ratio:16/9;max-width:100%;background:#000;border-radius:10px;overflow:hidden}
+.video > div,.video iframe{position:absolute;inset:0;width:100%;height:100%}
+
+/* Progresa josla: augsta pieskāriena zona, plāna redzamā līnija */
+.controls{display:flex;flex-direction:column;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+.times{display:flex;justify-content:space-between;font-variant-numeric:tabular-nums;color:var(--muted);font-size:.95rem}
+.times b{color:var(--fg);font-weight:600}
+.seek{position:relative;height:56px;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;border-radius:8px}
+.seek .bar{position:absolute;left:0;right:0;top:50%;height:10px;margin-top:-5px;background:var(--track);border-radius:5px;overflow:hidden}
+.seek .fill{position:absolute;left:0;top:0;bottom:0;background:var(--accent);width:0}
+.seek .knob{position:absolute;top:50%;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 6px rgba(224,178,92,.18);left:0}
+.seek.drag .knob{width:34px;height:34px;margin:-17px 0 0 -17px}
+.bubble{position:absolute;bottom:calc(100% + 6px);transform:translateX(-50%);background:var(--accent);color:#1a1408;font-family:var(--display);font-weight:700;font-size:1.5rem;padding:6px 14px;border-radius:10px;font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none}
+.skips{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+.skips button{padding:12px 0;font-variant-numeric:tabular-nums;font-size:.95rem}
+.play{font-size:1.15rem;width:100%}
+
+.resume{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.resume b{font-family:var(--display);font-size:1.6rem;color:var(--accent);font-variant-numeric:tabular-nums}
+.status{font-size:.9rem;color:var(--muted)}
+.dimrow{display:flex;align-items:center;gap:10px}
+.dimrow input[type=range]{flex:1;min-width:0;accent-color:var(--accent);height:32px}
+.toggle{display:flex;gap:8px;align-items:center;font-size:.9rem;color:var(--muted)}
+.toggle input{width:20px;height:20px;accent-color:var(--accent)}
+
+.dim{position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;z-index:15}
+.check{position:fixed;inset:0;background:rgba(10,11,16,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;z-index:20;padding:24px}
+.check button{font-size:1.6rem;padding:40px 48px;border-radius:999px;background:var(--accent);color:#1a1408;border:none;font-weight:700}
+.check p{margin:0;color:var(--muted);text-align:center}
+.count{font-family:var(--display);font-size:2.4rem;color:var(--fg);font-variant-numeric:tabular-nums}
+h2{font-family:var(--display);font-size:1.1rem;margin:8px 0 0;font-weight:500}
+ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+li{display:flex;align-items:center;gap:10px;background:var(--panel);border-radius:10px;padding:8px 10px;font-size:.92rem}
+li .t{color:var(--muted);font-variant-numeric:tabular-nums;width:3.2em}
+li .p{font-variant-numeric:tabular-nums;font-weight:600}
+li .k{flex:1;min-width:0;color:var(--muted)}
+li.ok .k{color:var(--ok)} li.sleep .k{color:var(--warn)}
+li button{padding:6px 12px;font-size:.9rem}
+details{color:var(--muted);font-size:.9rem}
+@media (prefers-reduced-motion:no-preference){.check button{animation:pulse 2s ease-in-out infinite}}
+@keyframes pulse{50%{transform:scale(1.05)}}
+@media (max-width:380px){.skips button{font-size:.85rem}}
+</style>
+</head>
+<body>
+<div class="dim" id="dim"></div>
+<main>
+  <header>
+    <h1>Nakts klausītājs</h1>
+    <p class="sub">Atceras pēdējo vietu, ko tu tiešām dzirdēji.</p>
+  </header>
+
+  <div class="row">
+    <input type="text" id="url" placeholder="Ielīmē YouTube saiti" autocomplete="off">
+    <button id="load" class="primary">Atvērt</button>
+  </div>
+
+  <div class="video"><div id="player"></div></div>
+
+  <section class="controls" aria-label="Atskaņošana">
+    <div class="times"><b id="cur">0:00</b><span id="dur">0:00</span></div>
+    <div class="seek" id="seek" role="slider" tabindex="0" aria-label="Vieta grāmatā" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+      <div class="bar"><div class="fill" id="fill"></div></div>
+      <div class="knob" id="knob"></div>
+      <div class="bubble" id="bubble" hidden>0:00</div>
+    </div>
+    <div class="skips">
+      <button data-s="-600">−10 m</button>
+      <button data-s="-60">−1 m</button>
+      <button data-s="-15">−15 s</button>
+      <button data-s="15">+15 s</button>
+      <button data-s="60">+1 m</button>
+      <button data-s="600">+10 m</button>
+    </div>
+    <button id="playBtn" class="primary play">▶ Atskaņot</button>
+  </section>
+
+  <section class="resume" id="resumeBox" hidden>
+    <span class="status">Pēdējā apzinātā vieta</span>
+    <b id="resumePos">0:00</b>
+    <div class="row">
+      <button id="resumeBtn" class="primary">Atsākt no šejienes</button>
+      <button id="markBtn">Atzīmēt tagad</button>
+    </div>
+    <span class="status" id="status"></span>
+  </section>
+
+  <section class="controls" aria-label="Iestatījumi">
+    <div class="dimrow">
+      <label for="dimRange" class="status">Aptumšot</label>
+      <input type="range" id="dimRange" min="0" max="90" step="5" value="0">
+      <span class="status" id="dimVal" style="width:3em;text-align:right">0%</span>
+    </div>
+    <div class="row">
+      <label for="interval" class="status">Jautāt ik pēc</label>
+      <select id="interval">
+        <option value="0">nekad</option>
+        <option value="5">5 min</option>
+        <option value="10" selected>10 min</option>
+        <option value="15">15 min</option>
+        <option value="20">20 min</option>
+      </select>
+      <label for="grace" class="status">gaidīt</label>
+      <select id="grace">
+        <option value="30">30 s</option>
+        <option value="60" selected>60 s</option>
+        <option value="90">90 s</option>
+      </select>
+    </div>
+    <label class="toggle"><input type="checkbox" id="keepOn" checked> Turēt ekrānu ieslēgtu, kamēr skan</label>
+  </section>
+
+  <h2>Žurnāls</h2>
+  <ol id="log"></ol>
+
+  <details>
+    <summary>Kā tas strādā</summary>
+    <p>Josla: pieskaries vai noklikšķini jebkurā vietā un velc. Lielais skaitlis rāda laiku, un pēc atlaišanas atskaņošana sākas tieši no tā. Datorā joslu var vadīt arī ar bultiņām (←/→ pa 15 s, ar Shift pa 1 min).</p>
+    <p>Miega pārbaude: ik pēc izvēlētā laika atskan klusa skaņa un parādās poga “Es klausos”. Ja to nenospied, atskaņošana apstājas, un atsākšanas vieta ir pēdējā apstiprinātā mīnus 30 sekundes.</p>
+    <p>“Aptumšot” uzliek lapai tumšu slāni. Telefona īsto spilgtumu tīmekļa lapa mainīt nevar; to varēs Android lietotnē.</p>
+  </details>
+</main>
+
+<div class="check" id="check" hidden>
+  <p>Vai vēl klausies?</p>
+  <button id="awake">Es klausos</button>
+  <div class="count" id="count">60</div>
+  <p>Ja nenospiedīsi, apturēšu un atcerēšos vietu.</p>
+</div>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+};
+const fmt = s => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60;
+  return (h ? h + ':' + String(m).padStart(2,'0') : m) + ':' + String(x).padStart(2,'0'); };
+const clock = () => new Date().toLocaleTimeString('lv-LV', {hour:'2-digit', minute:'2-digit'});
+function parseId(u){ u = u.trim(); if (/^[\w-]{11}$/.test(u)) return u;
+  const m = u.match(/(?:v=|youtu\.be\/|shorts\/|embed\/|live\/)([\w-]{11})/); return m ? m[1] : null; }
+
+let player = null, ready = false, vid = null, data = null, lastConfirmAt = 0, checkTimer = null, countTimer = null, wake = null, audioCtx = null;
+let dragging = false, dragPos = 0, lastSeen = 0;
+
+const ok = () => player && ready && player.getCurrentTime;
+const dur = () => ok() ? (player.getDuration() || 0) : 0;
+const now = () => ok() ? player.getCurrentTime() : 0;
+const playing = () => ok() && player.getPlayerState() === YT.PlayerState.PLAYING;
+
+function save(){ if (vid) store.set('nk:' + vid, data); }
+function load(id){ vid = id; data = store.get('nk:' + id, {pos:0, log:[]}); store.set('nk:last', id); render(); }
+function addLog(kind, pos){ if (!data) return; data.log.unshift({t:clock(), p:pos, k:kind}); data.log = data.log.slice(0, 60); save(); render(); }
+function confirmPos(kind){ if (!ok()) return; const p = now(); data.pos = p; lastConfirmAt = Date.now(); addLog(kind, p); }
+
+function render(){
+  $('resumeBox').hidden = !vid;
+  if (!vid) return;
+  $('resumePos').textContent = fmt(data.pos);
+  const labels = {ok:'Es klausos', pause:'Pauze', mark:'Atzīmēts', sleep:'Aizmigi (atpakaļ uz šo)', seek:'Pārtīts'};
+  $('log').innerHTML = '';
+  data.log.forEach(e => {
+    const li = document.createElement('li'); li.className = e.k;
+    li.innerHTML = `<span class="t">${e.t}</span><span class="p">${fmt(e.p)}</span><span class="k">${labels[e.k]||e.k}</span>`;
+    const b = document.createElement('button'); b.textContent = 'Uz šejieni';
+    b.onclick = () => jumpTo(e.p, true);
+    li.appendChild(b); $('log').appendChild(li);
+  });
+}
+
+/* ---------- Pārlēkšana ---------- */
+function jumpTo(t, play){
+  if (!ok()) return;
+  const d = dur(); t = Math.max(0, d ? Math.min(t, d - 1) : t);
+  player.seekTo(t, true);
+  lastSeen = t; lastConfirmAt = Date.now();
+  drawSeek(t);
+  if (play) player.playVideo();
+}
+document.querySelectorAll('.skips button').forEach(b => b.onclick = () => {
+  if (!ok()) return;
+  const t = now() + (+b.dataset.s);
+  jumpTo(t, false);
+  addLog('seek', Math.max(0, Math.min(t, dur())));
+});
+
+/* ---------- Progresa josla (pele un pirksts, ar Pointer Events) ---------- */
+const seek = $('seek');
+function drawSeek(t){
+  const d = dur(), f = d ? Math.min(1, Math.max(0, t / d)) : 0;
+  $('fill').style.width = (f * 100) + '%';
+  $('knob').style.left = (f * 100) + '%';
+  $('bubble').style.left = Math.min(92, Math.max(8, f * 100)) + '%';
+  $('cur').textContent = fmt(t); $('dur').textContent = fmt(d);
+  seek.setAttribute('aria-valuemax', Math.floor(d)); seek.setAttribute('aria-valuenow', Math.floor(t));
+  seek.setAttribute('aria-valuetext', fmt(t));
+}
+function posFromEvent(e){
+  const r = seek.getBoundingClientRect();
+  const f = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  return f * dur();
+}
+seek.addEventListener('pointerdown', e => {
+  if (!ok() || !dur()) return;
+  e.preventDefault();
+  dragging = true; seek.classList.add('drag'); seek.setPointerCapture(e.pointerId);
+  dragPos = posFromEvent(e); $('bubble').hidden = false; $('bubble').textContent = fmt(dragPos); drawSeek(dragPos);
+});
+seek.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  dragPos = posFromEvent(e); $('bubble').textContent = fmt(dragPos); drawSeek(dragPos);
+});
+function endDrag(e, commit){
+  if (!dragging) return;
+  dragging = false; seek.classList.remove('drag'); $('bubble').hidden = true;
+  try{ seek.releasePointerCapture(e.pointerId); }catch(_){}
+  if (commit){ const t = Math.floor(dragPos); jumpTo(t, false); addLog('seek', t); }
+}
+seek.addEventListener('pointerup', e => endDrag(e, true));
+seek.addEventListener('pointercancel', e => endDrag(e, true));
+seek.addEventListener('keydown', e => {
+  const step = e.shiftKey ? 60 : 15;
+  if (e.key === 'ArrowRight'){ e.preventDefault(); jumpTo(now() + step, false); }
+  if (e.key === 'ArrowLeft'){ e.preventDefault(); jumpTo(now() - step, false); }
+});
+setInterval(() => { if (!dragging && ok()) drawSeek(now()); }, 250);
+
+/* ---------- Atskaņot / pauze ---------- */
+$('playBtn').onclick = () => { if (!ok()) return; playing() ? player.pauseVideo() : player.playVideo(); };
+function setPlayLabel(){ $('playBtn').textContent = playing() ? '❚❚ Pauze' : '▶ Atskaņot'; }
+
+/* ---------- Aptumšošana ---------- */
+function setDim(v){ $('dim').style.opacity = v / 100; $('dimVal').textContent = v + '%'; $('dimRange').value = v; store.set('nk:dim', v); }
+$('dimRange').oninput = e => setDim(+e.target.value);
+setDim(store.get('nk:dim', 0));
+
+/* ---------- Ekrāns, skaņas signāls ---------- */
+function beep(){
+  try{
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = 660; g.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.15, audioCtx.currentTime + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.6);
+    o.connect(g).connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + 0.7);
+  }catch(e){}
+}
+async function wakeOn(){ if (!$('keepOn').checked) return; try{ if ('wakeLock' in navigator && !wake){ wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => wake = null); } }catch(e){} }
+function wakeOff(){ try{ wake && wake.release(); }catch(e){} wake = null; }
+$('keepOn').onchange = e => { store.set('nk:keepOn', e.target.checked); e.target.checked && playing() ? wakeOn() : wakeOff(); };
+$('keepOn').checked = store.get('nk:keepOn', true);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && playing()) wakeOn(); });
+
+/* ---------- Miega pārbaude ---------- */
+function startWatch(){
+  clearInterval(checkTimer);
+  checkTimer = setInterval(() => {
+    const iv = +$('interval').value;
+    if (!iv || !playing() || !$('check').hidden) return;
+    if (Date.now() - lastConfirmAt >= iv * 60000) askAwake();
+  }, 5000);
+}
+function askAwake(){
+  let left = +$('grace').value;
+  $('count').textContent = left; $('check').hidden = false; beep();
+  clearInterval(countTimer);
+  countTimer = setInterval(() => {
+    left--; $('count').textContent = left;
+    if (left % 15 === 0 && left > 0) beep();
+    if (left <= 0){
+      clearInterval(countTimer); $('check').hidden = true;
+      player.pauseVideo();
+      data.pos = Math.max(0, data.pos - 30); addLog('sleep', data.pos);
+      $('status').textContent = 'Apturēts ' + clock() + '. Atsāc ar pogu “Atsākt no šejienes”.';
+      wakeOff();
+    }
+  }, 1000);
+}
+$('awake').onclick = () => { clearInterval(countTimer); $('check').hidden = true; confirmPos('ok'); };
+$('markBtn').onclick = () => confirmPos('mark');
+$('resumeBtn').onclick = () => { if (data) jumpTo(data.pos, true); };
+
+/* ---------- Video ielāde ---------- */
+$('load').onclick = () => {
+  const id = parseId($('url').value);
+  if (!id){ $('url').value = ''; $('url').placeholder = 'Šī nav YouTube saite. Mēģini vēlreiz.'; return; }
+  openVideo(id, true);
+};
+function openVideo(id, fresh){
+  load(id);
+  if (player && ready) player.cueVideoById({videoId:id, startSeconds:Math.floor(data.pos)});
+  else if (!player) makePlayer(id);
+  $('status').textContent = fresh && data.pos ? 'Šai grāmatai ir saglabāta vieta.' : '';
+}
+function makePlayer(id){
+  player = new YT.Player('player', {
+    videoId: id,
+    playerVars:{start: Math.floor(data.pos), playsinline:1, rel:0, controls:0, disablekb:1, iv_load_policy:3},
+    events:{
+      onReady: () => { ready = true; drawSeek(data.pos); },
+      onStateChange: e => {
+        setPlayLabel();
+        const t = now();
+        if (e.data === YT.PlayerState.PLAYING){
+          lastConfirmAt = Date.now(); lastSeen = t; data.pos = t; save(); render(); wakeOn(); startWatch();
+        } else if (e.data === YT.PlayerState.PAUSED){
+          if ($('check').hidden) confirmPos('pause');
+          wakeOff();
+        }
+      }
+    }
+  });
+}
+window.onYouTubeIframeAPIReady = () => {
+  const last = store.get('nk:last', null);
+  if (last){ $('url').value = 'https://youtu.be/' + last; openVideo(last, false); }
+};
+</script>
+</body>
+</html>
