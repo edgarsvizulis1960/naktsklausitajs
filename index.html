@@ -7,7 +7,7 @@
 <meta name="theme-color" content="#12141c">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-title" content="Miegstāsts">
-<title>Nakts klausītājs</title>
+<title>Miegstāsts</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,500;7..72,700&display=swap">
 <style>
@@ -98,7 +98,7 @@ details{color:var(--muted);font-size:.9rem}
 <div class="dim" id="dim"></div>
 <main>
   <header>
-    <h1>Nakts klausītājs</h1>
+    <h1>Miegstāsts</h1>
     <p class="sub">Atceras pēdējo vietu, ko tu tiešām dzirdēji.</p>
   </header>
 
@@ -473,7 +473,7 @@ setInterval(() => {
 /* ---------- Bloķētā ekrāna un austiņu pogas (audio failiem) ---------- */
 function setMediaSession(){
   if (!('mediaSession' in navigator)) return;
-  try{ navigator.mediaSession.metadata = new MediaMetadata({title: cur.title, artist: 'Nakts klausītājs'}); }catch(e){}
+  try{ navigator.mediaSession.metadata = new MediaMetadata({title: cur.title, artist: 'Miegstāsts'}); }catch(e){}
   const awakeOr = fn => () => { if (!$('check').hidden){ confirmAwake(); return; } fn(); };
   const h = {
     play: awakeOr(() => P.play()),
