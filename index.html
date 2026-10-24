@@ -271,6 +271,16 @@ let wasPlaying = false, autoPause = false;
 let partSeek = null;
 const selected = new Set();
 
+const MSG_YTLOAD = 'YouTube atskaņotājs neielādējās. Pārbaudi internetu, tad aizver lietotni pavisam un atver no jauna.';
+// YouTube kļūdu kodi: https://developers.google.com/youtube/iframe_api_reference#onError
+const YT_ERRORS = {
+  2: 'YouTube nepieņēma šo saiti. Pārbaudi, vai tā ir pareiza.',
+  5: 'YouTube atskaņotājā radās kļūda. Mēģini vēlreiz.',
+  100: 'Video nav atrasts, ir izdzēsts vai ir privāts.',
+  101: 'Šī video autors neļauj to atskaņot citās lietotnēs. Atver to YouTube.',
+  150: 'Šī video autors neļauj to atskaņot citās lietotnēs. Atver to YouTube.',
+  153: 'YouTube atskaņotājs atteicās darboties šajā lietotnē (kļūda 153).'
+};
 const MSG_BADURL = 'Šo saiti nevar atskaņot. Pārbaudi, vai tā ved tieši uz audio failu (piem. .mp3) vai uz YouTube video.';
 
 /* ---------- Kopīgs atskaņotāja interfeiss abiem avotiem ---------- */
@@ -337,13 +347,23 @@ function begin(src){
 }
 function openYouTube(id){
   begin({key:id, kind:'yt', title:'YouTube ' + id});
+  watchYTLoad();
   if (!window.YT || !YT.loaded || !YT.Player){ ytPending = id; return; }
   if (yt && ytReady) yt.cueVideoById({videoId:id, startSeconds:Math.floor(data.pos)});
   else if (!yt) makeYT(id);
+  // ja atskaņotājs vēl gatavojas, onReady ielādēs šo grāmatu
+}
+// Ja YouTube atskaņotājs 10 sekundēs nav gatavs, pasaka to, nevis klusē
+let ytLoadTimer = null;
+function watchYTLoad(){
+  clearTimeout(ytLoadTimer);
+  if (ytReady) return;
+  ytLoadTimer = setTimeout(() => { if (isYT() && !ytReady) showMsg(MSG_YTLOAD); }, 10000);
 }
 function openYTList(list, startVideo){
   partSeek = null;
   begin({key:'l:' + list, kind:'ytlist', list, title:'YouTube saraksts', url:'https://www.youtube.com/playlist?list=' + list, startVideo});
+  watchYTLoad();
   if (!window.YT || !YT.loaded || !YT.Player){ ytPending = cur.key; return; }
   if (yt && ytReady) cueList();
   else if (!yt) makeYT(cur.key);
@@ -461,11 +481,15 @@ audio.addEventListener('error', () => {
 /* ---------- YouTube ---------- */
 function makeYT(id){
   const single = cur && cur.kind === 'yt';
+  const vars = {start: Math.floor(data.pos), playsinline:1, rel:0, controls:0, disablekb:1, iv_load_policy:3, origin: location.origin};
+  // sarakstam atskaņotāju uzreiz izveido ar sarakstu, nevis tukšu
+  if (!single) Object.assign(vars, {listType:'playlist', list:cur.list, index:data.part || 0});
   yt = new YT.Player('player', {
     videoId: single ? id : undefined,
-    playerVars:{start: single ? Math.floor(data.pos) : 0, playsinline:1, rel:0, controls:0, disablekb:1, iv_load_policy:3},
+    playerVars: vars,
     events:{
-      onReady: () => { ytReady = true; if (cur && cur.kind === 'yt'){ touchBook(); render(); drawSeek(data.pos); } if (isList()) cueList(); },
+      onReady: () => { ytReady = true; clearTimeout(ytLoadTimer); syncYT(); },
+      onError: e => { if (isYT()) showMsg(YT_ERRORS[e.data] || 'YouTube kļūda (kods ' + e.data + ').'); },
       onStateChange: e => {
         if (!isYT()) return;
         if (e.data === YT.PlayerState.CUED){ applyStartVideo(); touchBook(); render(); drawSeek(data.pos); }
@@ -478,6 +502,16 @@ function makeYT(id){
       }
     }
   });
+}
+// Kad atskaņotājs gatavs: ielādē to grāmatu, kas atvērta tagad (tā var būt mainījusies, kamēr atskaņotājs gatavojās)
+function syncYT(){
+  if (!isYT() || !ytReady) return;
+  if (cur.kind === 'yt'){
+    let vid = ''; try{ vid = yt.getVideoData().video_id || ''; }catch(e){}
+    if (vid !== cur.key) yt.cueVideoById({videoId:cur.key, startSeconds:Math.floor(data.pos)});
+    touchBook(); render(); drawSeek(data.pos);
+  } else if (!P.parts()) cueList();
+  else { applyStartVideo(); touchBook(); render(); drawSeek(data.pos); }
 }
 window.onYouTubeIframeAPIReady = () => {
   if (ytPending){ const id = ytPending; ytPending = null; if (cur && cur.key === id) makeYT(id); }
