@@ -257,6 +257,8 @@ let yt = null, ytReady = false, ytPending = null;
 const audio = $('audio');
 let objUrl = null, lastConfirmAt = 0, checkTimer = null, countTimer = null, deadline = 0, wake = null, audioCtx = null;
 let dragging = false, dragPos = 0, pendingSeek = null, playingKey = null;
+// wasPlaying: atskaņošana jau notiek (atsākšanās pēc aizķeršanās nav apstiprinājums); autoPause: apturēja miega pārbaude, nevis tu
+let wasPlaying = false, autoPause = false;
 const selected = new Set();
 
 const MSG_BADURL = 'Šo saiti nevar atskaņot. Pārbaudi, vai tā ved tieši uz audio failu (piem. .mp3) vai uz YouTube video.';
@@ -294,7 +296,7 @@ function stopAll(){
   audio.pause();
 }
 function begin(src){
-  playingKey = null;
+  playingKey = null; wasPlaying = false; autoPause = false;
   stopAll();
   cur = src;
   data = store.get('nk:' + src.key, {pos:0, log:[]});
@@ -425,6 +427,7 @@ function makeYT(id){
         if (e.data === YT.PlayerState.CUED){ touchBook(); render(); drawSeek(data.pos); }
         if (e.data === YT.PlayerState.PLAYING) onPlaying();
         if (e.data === YT.PlayerState.PAUSED) onPaused();
+        if (e.data === YT.PlayerState.ENDED) wasPlaying = false;
         setPlayLabel();
       }
     }
@@ -438,13 +441,17 @@ window.onYouTubeIframeAPIReady = () => {
 function onPlaying(){
   setPlayLabel();
   if (!data) return;
+  if (wasPlaying && playingKey === cur.key) return;
+  wasPlaying = true;
   playingKey = cur.key;
   lastConfirmAt = Date.now(); data.pos = P.time(); save(); render(); wakeOn(); startWatch();
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
 }
 function onPaused(){
   setPlayLabel();
+  wasPlaying = false;
   if (!cur || playingKey !== cur.key) return;
+  if (autoPause){ autoPause = false; wakeOff(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'; return; }
   if ($('check').hidden) confirmPos('pause');
   wakeOff();
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
@@ -456,6 +463,7 @@ $('playBtn').onclick = () => { if (!P.ok()) return; P.playing() ? P.pause() : P.
 function jumpTo(t, play){
   if (!P.ok()) return;
   const d = P.dur(); t = Math.max(0, d ? Math.min(t, d - 1) : t);
+  if (cur.kind === 'yt') wasPlaying = false;
   P.seek(t); lastConfirmAt = Date.now(); drawSeek(t);
   if (play) P.play();
 }
@@ -634,7 +642,7 @@ function askAwake(){
     if (Date.now() - lastBeep >= 15000 && left > 0){ beep(); lastBeep = Date.now(); }
     if (left <= 0){
       clearInterval(countTimer); $('check').hidden = true;
-      P.pause();
+      autoPause = true; P.pause();
       data.pos = Math.max(0, data.pos - 30); addLog('sleep', data.pos);
       $('status').textContent = 'Apturēts ' + clock() + '. Atsāc ar pogu “Atsākt no šejienes”.';
       wakeOff();
