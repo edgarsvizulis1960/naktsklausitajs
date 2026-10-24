@@ -28,7 +28,7 @@ main{max-width:640px;margin:0 auto;padding-block:16px 48px;
 h1{font-family:var(--display);font-weight:700;font-size:1.5rem;margin:0;color:var(--accent)}
 .sub{color:var(--muted);margin:0;font-size:.9rem}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-input[type=text],select{flex:1;min-width:0;background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:1rem}
+input[type=text],input[type=url],select{flex:1;min-width:0;background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:1rem}
 button{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:12px 16px;font-size:1rem;cursor:pointer;touch-action:manipulation}
 button.primary{background:var(--accent);color:#1a1408;border-color:var(--accent);font-weight:600}
 button:focus-visible,input:focus-visible,select:focus-visible,.seek:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -87,6 +87,7 @@ details{color:var(--muted);font-size:.9rem}
 @media (prefers-reduced-motion:no-preference){.check button{animation:pulse 2s ease-in-out infinite}}
 @keyframes pulse{50%{transform:scale(1.05)}}
 @media (max-width:380px){.skips button{font-size:.85rem}}
+@media (max-width:600px){.urlrow #url{flex-basis:100%}.urlrow button{flex:1}}
 .audiocard{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
 .audiocard .disc{flex:none;width:56px;height:56px;border-radius:50%;background:radial-gradient(circle,var(--bg) 0 18%,var(--accent) 19% 22%,var(--track) 23% 100%)}
 .audiocard .an{min-width:0;display:flex;flex-direction:column;gap:4px}
@@ -102,12 +103,14 @@ details{color:var(--muted);font-size:.9rem}
     <p class="sub">Atceras pēdējo vietu, ko tu tiešām dzirdēji.</p>
   </header>
 
-  <div class="row">
-    <input type="text" id="url" placeholder="YouTube vai audio faila saite" autocomplete="off">
+  <div class="row urlrow">
+    <input type="url" id="url" placeholder="YouTube vai audio faila saite" autocomplete="off" inputmode="url" autocapitalize="off" spellcheck="false">
+    <button id="pasteBtn">Ielīmēt</button>
     <button id="load" class="primary">Atvērt</button>
     <button id="fileBtn" class="filebtn">Fails no ierīces</button>
     <input type="file" id="fileIn" accept="audio/*,.mp3,.m4a,.m4b,.aac,.ogg,.opus,.flac,.wav" hidden>
   </div>
+  <span class="status" id="urlHint" hidden></span>
   <label class="toggle"><input type="checkbox" id="keepCopy" checked> Saglabāt failu atskaņotājā, lai nākamreiz nav jāmeklē</label>
   <span class="status" id="srcMsg" hidden></span>
 
@@ -215,6 +218,8 @@ const clock = () => new Date().toLocaleTimeString('lv-LV', {hour:'2-digit', minu
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 function ytId(u){ u = u.trim(); if (/^[\w-]{11}$/.test(u)) return u;
   const m = u.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([\w-]{11})/); return m ? m[1] : null; }
+function ytList(u){ u = u.trim(); if (!/(?:youtube\.com|youtu\.be)\//i.test(u)) return null;
+  const m = u.match(/[?&]list=([\w-]+)/); return m ? m[1] : null; }
 const stripExt = n => n.replace(/\.[^.]+$/, '');
 
 /* ---------- Failu krātuve atskaņotājā (IndexedDB) ---------- */
@@ -254,13 +259,16 @@ let objUrl = null, lastConfirmAt = 0, checkTimer = null, countTimer = null, dead
 let dragging = false, dragPos = 0, pendingSeek = null, playingKey = null;
 const selected = new Set();
 
+const MSG_BADURL = 'Šo saiti nevar atskaņot. Pārbaudi, vai tā ved tieši uz audio failu (piem. .mp3) vai uz YouTube video.';
+const MSG_LIST = 'Šī ir YouTube atskaņošanas saraksta saite. Atver sarakstā konkrētu daļu un iekopē tās saiti.';
+
 /* ---------- Kopīgs atskaņotāja interfeiss abiem avotiem ---------- */
 const P = {
   ok(){ return cur && (cur.kind === 'yt' ? (yt && ytReady && yt.getCurrentTime) : !!audio.src); },
   time(){ if (!P.ok()) return 0; return cur.kind === 'yt' ? yt.getCurrentTime() : audio.currentTime; },
   dur(){ if (!P.ok()) return 0; const d = cur.kind === 'yt' ? yt.getDuration() : audio.duration; return isFinite(d) ? d : 0; },
   playing(){ if (!P.ok()) return false; return cur.kind === 'yt' ? yt.getPlayerState() === YT.PlayerState.PLAYING : !audio.paused && !audio.ended; },
-  play(){ if (!P.ok()) return; cur.kind === 'yt' ? yt.playVideo() : audio.play().catch(() => {}); },
+  play(){ if (!P.ok()) return; cur.kind === 'yt' ? yt.playVideo() : audio.play().catch(() => { if (cur && cur.kind === 'url') showMsg(MSG_BADURL); }); },
   pause(){ if (!P.ok()) return; cur.kind === 'yt' ? yt.pauseVideo() : audio.pause(); },
   seek(t){ if (!P.ok()) return; cur.kind === 'yt' ? yt.seekTo(t, true) : (audio.currentTime = t); },
   title(){ try{ if (cur && cur.kind === 'yt' && P.ok()) return yt.getVideoData().title || ''; }catch(e){} return cur ? cur.title || '' : ''; }
@@ -300,7 +308,7 @@ function begin(src){
     $('audioKind').textContent = src.kind === 'file' ? 'Fails no ierīces' : 'Audio saite';
   }
   $('status').textContent = data.pos ? 'Šai grāmatai ir saglabāta vieta: ' + fmt(data.pos) + '.' : '';
-  touchBook(); render(); drawSeek(data.pos);
+  touchBook(); render(); drawSeek(data.pos); updateHint();
 }
 function openYouTube(id){
   begin({key:id, kind:'yt', title:'YouTube ' + id});
@@ -317,8 +325,10 @@ function openAudio(src, kind, key, title){
 function openUrl(u){
   u = u.trim();
   if (!u) return;
+  showMsg('');
   const id = ytId(u);
   if (id) return openYouTube(id);
+  if (ytList(u)){ showMsg(MSG_LIST); return; }
   if (!/^https?:\/\//i.test(u)){ showMsg('Saitei jāsākas ar http:// vai https://.'); return; }
   let name = u; try{ name = decodeURIComponent(new URL(u).pathname.split('/').pop()) || u; }catch(e){}
   openAudio(u, 'url', 'u:' + u, stripExt(name));
@@ -327,6 +337,31 @@ function showMsg(t){ $('srcMsg').textContent = t; $('srcMsg').hidden = !t; }
 
 $('load').onclick = () => { showMsg(''); openUrl($('url').value); };
 $('url').addEventListener('keydown', e => { if (e.key === 'Enter') $('load').click(); });
+
+/* ---------- Ko lietotne saprata no saites ---------- */
+function urlHint(u){
+  u = u.trim();
+  if (!u) return '';
+  if (ytId(u)) return 'YouTube video ✓';
+  if (ytList(u)) return 'YouTube saraksts — atver konkrētu daļu';
+  if (/^https?:\/\//i.test(u)) return 'Audio saite';
+  return 'Nav saite';
+}
+function updateHint(){ const t = urlHint($('url').value); $('urlHint').textContent = t; $('urlHint').hidden = !t; }
+$('url').addEventListener('input', updateHint);
+
+/* ---------- Ielīmēt ---------- */
+if (!(navigator.clipboard && navigator.clipboard.readText)) $('pasteBtn').hidden = true;
+$('pasteBtn').onclick = async () => {
+  try{
+    const t = await navigator.clipboard.readText();
+    $('url').value = t.trim(); updateHint();
+    $('load').click();
+  }catch(e){
+    showMsg('Neizdevās ielīmēt automātiski — turi pirkstu laukā un izvēlies \'Ielīmēt\'.');
+    $('url').focus();
+  }
+};
 $('fileBtn').onclick = () => $('fileIn').click();
 function playBlob(blob, key, title){
   if (objUrl) URL.revokeObjectURL(objUrl);
@@ -375,7 +410,7 @@ audio.addEventListener('play', onPlaying);
 audio.addEventListener('pause', onPaused);
 audio.addEventListener('error', () => {
   if (!cur || cur.kind === 'yt') return;
-  showMsg(cur.kind === 'url' ? 'Šo saiti nevar atskaņot. Pārbaudi, vai tā ved tieši uz audio failu (piemēram, beidzas ar .mp3).' : 'Šo failu pārlūks nevar atskaņot. Mēģini MP3 vai M4A formātu.');
+  showMsg(cur.kind === 'url' ? MSG_BADURL : 'Šo failu pārlūks nevar atskaņot. Mēģini MP3 vai M4A formātu.');
 });
 
 /* ---------- YouTube ---------- */
@@ -512,7 +547,7 @@ function renderBooks(){
       const all = store.get('nk:books', {}); delete all[key]; store.set('nk:books', all);
       store.del('nk:' + key);
       if (kind === 'file') fileDB.del(key).catch(() => {}).then(showStoreInfo);
-      if (isCur){ stopAll(); cur = null; data = null; store.set('nk:last', null); $('url').value = ''; $('videoBox').hidden = true; $('audioBox').hidden = true; drawSeek(0); }
+      if (isCur){ stopAll(); cur = null; data = null; store.set('nk:last', null); $('url').value = ''; updateHint(); $('videoBox').hidden = true; $('audioBox').hidden = true; drawSeek(0); }
       render();
     };
     li.append(info, open, del); $('books').appendChild(li);
